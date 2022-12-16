@@ -1,0 +1,21 @@
+#! /bin/bash
+
+n_random=${1:-50}
+
+psql -d fdd2db -c 'drop table if exists random_test'
+
+#Crear la tabla
+psql -d fdd2db -c 'create table if not exists random_test(r_value integer)'
+
+#Insertar datos
+
+for i in $(seq $n_random)
+do
+query=$( echo $i | awk -v seed=$i -v query_state="insert into random_test values (%d)" "BEGIN {srand(seed)} {printf(query_state, int(rand()*100) +1)}")
+psql -d fdd2db -c "$query"
+done
+echo 'Quantiles'
+
+echo 1 | awk '{for(i = 1; i <= 10; i++) query=query "select percentile_cont(" i/10 ") within group (order by r_value) as percentile_" i "  from random_test;\n" }; END {printf(query)}' > queries
+
+psql -d fdd2db -f queries
