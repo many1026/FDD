@@ -1,0 +1,91 @@
+#! /bin/bash
+
+psql -d fdd2db -c "drop table if exists purchase_carts;drop table if exists book_user"
+#psql -d fdd2db -c "drop table if exists purchase_carts"
+
+# Crear tabla Catalog
+psql -d fdd2db -c "create table if not exists catalog (bookshelf_id serial primary key, title varchar(70), url varchar(50))"
+
+total_bookshelves=$(psql -d fdd2db -c "select count(bookshelf_id) from catalog" | awk '/ [0-9]+/ { print $1}')
+
+if [ $total_bookshelves -eq 0 ]
+then
+curl https://www.gutenberg.org/ebooks/bookshelf/ | sed -nE '/.*bookshelf_pages.*/,/.*content ending.*/{/.*li.*/p}' |
+sed "s/'/''/g"  | awk -F '\"' '{printf "insert into Catalog values(%d,\x27%s\x27, \x27https://www.gutenberg.org%s\x27);\n", NR,$4, $2}' | psql -d fdd2db
+fi
+
+# Crear table book
+
+psql -d fdd2db -c "create table if not exists book (book_id serial primary key, bookshelf_id integer references catalog(bookshelf_id), title varchar(300), author varchar(300), url varchar(100), downloads integer)"
+
+# Arreglo de bookshelf
+total_books=$(psql -d fdd2db -c "select count(*) from book" | awk '/ [0-9]+/ {print $0}')
+echo $total_books
+if [ $total_books -eq 0 ]
+then
+id_book=1
+psql -d fdd2db -c "select url from catalog" | grep '^ https:' | while read line
+do
+id_bookshelf=$(psql -d fdd2db -c "select bookshelf_id from catalog where url='$line'" | awk '/-+/ {getline; print $0}')
+curl $line | sed -nE '/<li class="booklink">/,/<li class="statusline">/p' | awk '/<span class="title">/ {print $0} /<span class="subtitle">/{print $0} /<span class="extra">/ {print $0} /.*<a class="link".*/ {print $0}' | sed 's/^<a class="link" href="\(.*\)" accesskey=".*">/\1/' | awk '{gsub("<\/span>", ""); print}' | sed 's/downloads/\n-------/' | awk 'BEGIN {ORS=""}; {print $0}' | sed 's/-------/\n/g' | sed 's/<span/</g' | awk -F '<' '{if (!/.*class="subtitle">.*/) {print $1 "<" $2 "<" "class=\"subtitle\">NA<"  $3} else {print $0} }' | awk '{print "https://www.gutenberg.org"$0}' | awk '{gsub("class=\"title\">", ""); print}' | awk '{gsub("class=\"subtitle\">",""); print}' | awk '{gsub("class=\"extra\">","");print}' | sed "s/'/''/g" | awk  -F '<' -v shelf="$id_bookshelf" -v book="$id_book" '{printf "insert into book values(%d,%d,\x27%s\x27,\x27%s\x27,\x27%s\x27,%d);\n", book, shelf, $2, $3, $1, $4; book++}' > query.txt
+psql -d fdd2db -f query.txt
+id_book=$(wc -l query.txt | grep -Eo '[0-9]+' | awk -v book="$id_book" '{print book + $0}')
+done
+fi
+
+total_bookshelves=$(psql -d fdd2db -c "select count(bookshelf_id) from catalog" | awk '/ [0-9]+/ { print $1}')
+
+read -p "Enter a number of bookshelves between [1-$total_bookshelves]	" n
+user_bookshelves=${n:-10}
+
+if (( $user_bookshelves > $total_bookshelves )) || (( $user_bookshelves < 1 ))
+then
+echo "Error, enter a number of bookshelves between [1-$total_bookshelves]"
+exit
+fi
+
+psql -d fdd2db -c "drop table if exists books_user_i"
+psql -d fdd2db -c "create table books_user_i as (select * from book where bookshelf_id <= $user_bookshelves)"
+total_downloads=$(psql -d fdd2db -c "select sum(downloads) from books_user_i" | awk '/ [0-9]+/ { print 1/$1}')
+
+psql -d fdd2db -c "create table book_user as (select book_id, bookshelf_id, title,author,url, downloads, sum_downloads, sum_downloads*$total_downloads as percentile from (select *, sum(downloads) over (order by downloads desc rows between unbounded preceding and current row) as sum_downloads from (select * from books_user_i) as sbq1) as sbq2)"
+psql -d fdd2db -c "drop table if exists books_user_i"
+
+psql -d fdd2db -c "alter table book_user add constraint pk_book primary key (book_id)"
+
+# Simulate user behaviour
+read -p "Enter a number of users between [1-10000]	" m
+num_user=${m:-1000}
+
+if (( $num_user > 10000 )) || (( $num_user < 1 ))
+then
+echo "Error, enter a number of users between [1-10000]"
+exit
+fi
+
+psql -d fdd2db -c "drop table if exists users; create table if not exists users(user_id serial primary key, name varchar(15))"
+for i in $(seq $num_user)
+do
+letters=$(for letter in {a..z}; do echo $letter; done | tr '\n' ' ')
+query=$(echo $i | awk -v letters="$letters" -v v_index="$i" "BEGIN {srand(v_index)}; {split(letters,list_letters); for(i = 0; i<5 + (rand()*100 % 10); i++) r_word = r_word list_letters[int(rand()*length(list_letters)) +1]; printf( \"insert into users values(%d, '%s')\", v_index, r_word)}")
+psql -d fdd2db -c "$query"
+done
+
+now=$(date +'%Y-%m-%d')
+psql -d fdd2db -c "create table purchase_carts(cart_id integer, user_id integer, book_id integer references book_user(book_id), purchase_date date, percentile float, constraint pk_purchase_cart primary key(cart_id, user_id, book_id))"
+
+for i in $(seq $num_user)
+do
+rand_num_books=$(( $RANDOM%5 + 1 ))
+echo $rand_num_books
+rand_date=$(shuf -n1 -i$(date -d '2020-01-01' '+%s')-$(date -d $now '+%s') | xargs -I{} date -d '@{}' '+%Y/%m/%d')
+for book in $(seq $rand_num_books)
+do
+rand_book_id=$(psql -d fdd2db -c "select book_id from book_user order by random() limit 1" | awk '/ [0-9]+/{print $1}')
+#rand_bookshelf=$(psql -d fdd2db -c "select bookshelf_id from book_user where book_id=$rand_book_id" | awk '/ [0-9]+/{print $1}')
+percentile=$(psql -d fdd2db -c "select percentile from book_user where book_id=$rand_book_id" | awk '/ 0\.[0-9]+/{print $1}')
+psql -d fdd2db -c "insert into purchase_carts values(1, $i, $rand_book_id, cast('$rand_date' as date), $percentile)"
+done
+done
+
+psql -d fdd2db -c "select * from purchase_carts" | grep -iE '^ +[0-9]+' | sed -e 's/|/,/g' -e 's/ //g' > purchase_carts.csv
