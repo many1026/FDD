@@ -1,0 +1,21 @@
+#! /bin/bash
+
+file="${1:-example}"
+
+# ----------------------------------------
+# This script process a text stream with
+# the following rules:
+# -> if the line contains a letter:
+#     -> it's length (in number of fields) is even
+#        print the average character lenght
+#        of each word within the line.
+#    -> it's length (''') is odd
+#       print the length of the middle character.
+#
+# -> if the line is made of numbers (exclusively)
+#   print the mean.
+# -> EOC print ERROR
+#
+# ----------------------------------------
+
+awk '/.*[a-zA-Z].*/ {if (!(NF % 2)) {word_length=0; for(i=1; i<=NF; i++) word_length+=length($i); print "Mean word length: " word_length/NF;} else print "Length of middle word: " length($(int(NF/2) + 1)) ". From line: " $0} /^[0-9]+ [[0-9]+| ]$/ {sum = 0; for(i=1; i<=NF; i++) sum+=$i; print "Mean of numbers: " sum/NF} /[^a-zA-Z0-9 ]/ { print "ERROR"}' $file 
