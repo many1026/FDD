@@ -1,0 +1,10 @@
+select percentile_cont(0.1) within group (order by r_value) as percentile_1  from random_test;
+select percentile_cont(0.2) within group (order by r_value) as percentile_2  from random_test;
+select percentile_cont(0.3) within group (order by r_value) as percentile_3  from random_test;
+select percentile_cont(0.4) within group (order by r_value) as percentile_4  from random_test;
+select percentile_cont(0.5) within group (order by r_value) as percentile_5  from random_test;
+select percentile_cont(0.6) within group (order by r_value) as percentile_6  from random_test;
+select percentile_cont(0.7) within group (order by r_value) as percentile_7  from random_test;
+select percentile_cont(0.8) within group (order by r_value) as percentile_8  from random_test;
+select percentile_cont(0.9) within group (order by r_value) as percentile_9  from random_test;
+select percentile_cont(1) within group (order by r_value) as percentile_10  from random_test;
